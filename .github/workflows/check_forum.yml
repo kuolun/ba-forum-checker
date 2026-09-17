@@ -1,0 +1,57 @@
+name: 論壇貼文監控
+
+on:
+  # 允許手動觸發
+  workflow_dispatch:
+  # 台灣時間 7:00-22:59 每 10 分鐘（UTC 23:00-14:59）
+  # 分鐘錯開整點（3,13,23,33,43,53），避免 GitHub Actions 整點壅塞導致 runner 排不到
+  schedule:
+    - cron: '3,13,23,33,43,53 23,0-14 * * *'
+
+# 防止多個 workflow 同時執行
+concurrency:
+  group: forum-check
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # 縮短 timeout，runner 排不到時及早失敗，下一輪 cron 接上而不是空等 15 分鐘
+    timeout-minutes: 5
+    steps:
+      # 取得程式碼（需要 token 有寫入權限才能 push state.json）
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 設定 Python 環境
+      - name: 設定 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      # 安裝依賴
+      - name: 安裝依賴
+        run: pip install -r requirements.txt
+
+      # 執行檢查
+      - name: 執行論壇檢查
+        env:
+          FORUM_BASE_URL: ${{ secrets.FORUM_BASE_URL }}
+          WATCH_AUTHORS: ${{ secrets.WATCH_AUTHORS }}
+          GMAIL_FROM: ${{ secrets.GMAIL_FROM }}
+          GMAIL_TO: ${{ secrets.GMAIL_TO }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+        run: python main.py
+
+      # 持久化 state.json（透過 git commit）
+      - name: 儲存狀態
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add state.json
+          git diff --staged --quiet || git commit -m "更新狀態檔 [skip ci]"
+          git push
